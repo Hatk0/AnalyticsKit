@@ -13,7 +13,9 @@ A lightweight, protocol-oriented analytics wrapper for iOS application. This lib
 ✅ **Easy to Swap** - Change your analytics infrastructure by just adding or removing a provider  
 ✅ **Type-Safe** - Use enums and structs for your events instead of raw strings  
 ✅ **No External Dependencies** - Keep your project lean and avoid dependency hell  
-✅ **Testability** - Easily mock analytics for unit testing
+✅ **Testability** - Easily mock analytics for unit testing  
+✅ **Middleware (Interceptors)** - Intercept, modify, or block events  
+✅ **Session Lifecycle** - Track session ID, start time, and duration automatically
 
 ## Installation
 
@@ -23,7 +25,7 @@ Add AnalyticsKit to your project via Xcode or Package.swift:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/YourUsername/AnalyticsKit.git", from: "1.0.0")
+    .package(url: "https://github.com/YourUsername/AnalyticsKit.git", from: "1.1.0")
 ]
 ```
 
@@ -58,18 +60,25 @@ enum AppEvent: AnalyticsEvent {
 }
 ```
 
-### 2. Set Up Providers
+### 2. Set Up Providers & Middlewares
 
-Register your providers in `AppDelegate` or at the app's entry point:
+Register your providers and interceptors at the app's entry point:
 
 ```swift
 import AnalyticsKit
 
-let consoleProvider = ConsoleAnalyticsProvider()
-// let mixpanelProvider = YourCustomProvider()
+let manager = AnalyticsManager.shared
 
-AnalyticsManager.shared.register(providers: [
-    consoleProvider
+// 1. Setup Providers
+manager.register(providers: [
+    ConsoleAnalyticsProvider()
+])
+
+// 2. Setup Interceptors (Middleware)
+let sessionInterceptor = SessionInterceptor()
+manager.register(interceptors: [
+    sessionInterceptor,
+    GlobalParametersInterceptor(parameters: ["app_version": "1.1.0"])
 ])
 ```
 
@@ -78,22 +87,63 @@ AnalyticsManager.shared.register(providers: [
 ```swift
 // Track using type-safe event
 AnalyticsManager.shared.track(event: AppEvent.login(method: "google"))
-
-// Or track using raw name and parameters
-AnalyticsManager.shared.track(name: "button_clicked", parameters: ["label": "Sign Up"])
 ```
 
-### 4. User Identity & Properties
+### 4. Session Management
 
 ```swift
-AnalyticsManager.shared.identify(userId: "user_12345")
-AnalyticsManager.shared.setUserProperty("premium", for: "subscription_tier")
+// The SessionInterceptor automatically adds 'session_id' and 'session_duration' 
+// to every event.
 
-// Clear on logout
-AnalyticsManager.shared.reset()
+// Manually restart session
+sessionInterceptor.startSession()
+
+// End session (stops attaching duration)
+sessionInterceptor.endSession()
 ```
 
 ## Advanced Usage
+
+### Navigation Interceptors (Middleware)
+
+```swift
+struct ValidationInterceptor: AnalyticsInterceptor {
+    func intercept(event: AnalyticsEvent) -> AnalyticsEvent? {
+        // Drop events that don't have a required parameter
+        if event.name == "purchase" && event.parameters?["price"] == nil {
+            return nil 
+        }
+        return event
+    }
+}
+
+AnalyticsManager.shared.add(interceptor: ValidationInterceptor())
+```
+
+### Typed Events (Best Practices)
+
+Always use enums for type safety and avoid naming conflicts:
+
+```swift
+enum OnboardingEvent: AnalyticsEvent {
+    case started
+    case stepCompleted(step: Int)
+    
+    var name: String {
+        switch self {
+        case .started: return "onboarding_started"
+        case .stepCompleted: return "onboarding_step_completed"
+        }
+    }
+    
+    var parameters: [String: Sendable]? {
+        switch self {
+        case .started: return nil
+        case .stepCompleted(let step): return ["step_index": step]
+        }
+    }
+}
+```
 
 ### Creating a Custom Provider
 
@@ -113,17 +163,15 @@ class MyCustomProvider: AnalyticsProvider {
     func setUserProperty(_ value: Sendable?, for property: String) {
         // SomeSDK.setUserProperty(property, value: value)
     }
+    
+    func identify(userId: String?) {
+        // SomeSDK.identify(userId: userId)
+    }
+    
+    func reset() {
+        // SomeSDK.reset()
+    }
 }
-```
-
-### Advanced Manager Configuration
-
-```swift
-// Enable console logging for analytics events
-AnalyticsManager.shared.isLoggingEnabled = true
-
-// Disable all tracking (e.g., if user opted out)
-AnalyticsManager.shared.isEnabled = false
 ```
 
 ## Testing
@@ -137,6 +185,10 @@ final class MockProvider: AnalyticsProvider {
     func track(event: AnalyticsEvent) {
         trackedEvents.append(event)
     }
+    
+    func setUserProperty(_ value: Sendable?, for property: String) {}
+    func identify(userId: String?) {}
+    func reset() {}
 }
 
 func testLoginEvent() {
@@ -154,9 +206,8 @@ func testLoginEvent() {
 ### AnalyticsManager Methods
 
 - `register(providers:)` - Register an array of analytics providers
-- `add(provider:)` - Add a single provider to the current list
+- `register(interceptors:)` - Register an array of interceptors
 - `track(event:)` - Send a conforming `AnalyticsEvent` to all providers
-- `track(name:parameters:)` - Convenience method for raw tracking (parameters must be `Sendable`)
 - `identify(userId:)` - Set the unique identifier for the current user
 - `setUserProperty(_:for:)` - Set a global user attribute
 - `reset()` - Clear user identity and reset providers
@@ -164,7 +215,7 @@ func testLoginEvent() {
 ## Requirements
 
 - Swift 5.9+
-- iOS 13.0+ / macOS 10.15+ / tvOS 13.0+ / watchOS 6.0+ / visionOS 1.0+
+- iOS 16.0+ / macOS 13.0+ / tvOS 16.0+ / watchOS 9.0+ / visionOS 1.0+
 
 ## License
 
